@@ -31,6 +31,7 @@ import random
 import string
 import importlib
 import hashlib
+import json
 from copy import deepcopy
 from time import sleep
 from datetime import datetime
@@ -40,7 +41,7 @@ from lib.colorama import Fore, Style
 from configs.attack import *
 
 class Desyncr():
-	def __init__(self, configfile, smhost, smport=443, url="", method="POST", httpversion="1.1" ,endpoint="/",  SSLFlag=False, logh=None, smargs=None):
+	def __init__(self, configfile, smhost, smport=443, url="", method="POST", httpversion="1.1" ,endpoint="/",  SSLFlag=False, logh=None, jsonh=None, smargs=None):
 		self._configfile = configfile
 		self._host = smhost
 		self._port = smport
@@ -52,6 +53,7 @@ class Desyncr():
 		self._timeout = float(smargs.timeout)
 		self.ssl_flag = SSLFlag
 		self._logh = logh
+		self._jsonh = jsonh
 		self._quiet = smargs.quiet
 		self._exit_early = smargs.exit_early
 		self._attempts = 0
@@ -91,6 +93,21 @@ class Desyncr():
 			#print(exception_data)
 			return (-1, None, payload_obj) # Return code -1 if some except occured
 		
+	def _create_json_entry(self, title, severity, description, request, url):
+		"""Create a JSON entry for the output"""
+		if self._jsonh is not None:
+			entry = {
+				"title": title,
+				"asset": self._url,
+				"severity": severity,
+				"description": description,
+				"request": request,
+				"url": url
+			}
+			# Write JSON object to file immediately (JSONL format)
+			self._jsonh.write(json.dumps(entry) + "\n")
+			self._jsonh.flush()
+
 	def _get_cookies(self):
 		RN = "\r\n"
 		try:
@@ -236,6 +253,13 @@ class Desyncr():
 			with open(fname, 'wb') as file:
 #				print(bytes(str(payload),'utf-8'))
 				file.write(bytes(str(payload),'utf-8'))
+			
+			# Create JSON entry for the payload
+			title = f"smuggler/{ptype.lower()}/{name}"
+			description = f"HTTP Request Smuggling {ptype} vulnerability found"
+			request = str(payload)
+			url = self._url + self._endpoint
+			self._create_json_entry(title, "high", description, request, url)
 
 		# First lets test TECL
 		pretty_print(name, "Checking TECL...")
@@ -615,6 +639,7 @@ if __name__ == "__main__":
 	Parser.add_argument('-x', '--exit_early', action='store_true',help="Exit scan on first finding")
 	Parser.add_argument('-m', '--method', default="POST", help="HTTP method to use (e.g GET, POST) Default: POST")
 	Parser.add_argument('-l', '--log', help="Specify a log file")
+	Parser.add_argument('--json', help="Specify a JSON output file")
 	Parser.add_argument('-q', '--quiet', action='store_true', help="Quiet mode will only log issues found")
 	Parser.add_argument('-t', '--timeout', default=5.0, help="Socket timeout value Default: 5")
 	Parser.add_argument('--no-color', action='store_true', help="Suppress color codes")
@@ -646,11 +671,21 @@ if __name__ == "__main__":
 		Servers = [Args.url + " " + Args.method]
 
 	FileHandle = None
+	JsonHandle = None
+	
 	if Args.log is not None:
 		try:
 			FileHandle = open(Args.log, "w")
 		except:
 			print_info("Error: Issue with log file destination")
+			print(Parser.print_help())
+			sys.exit(1)
+			
+	if Args.json is not None:
+		try:
+			JsonHandle = open(Args.json, "w")
+		except:
+			print_info("Error: Issue with JSON file destination")
 			print(Parser.print_help())
 			sys.exit(1)
 
@@ -684,7 +719,7 @@ if __name__ == "__main__":
 		print_info("Configfile : %s"%(Fore.CYAN + configfile), FileHandle)
 		print_info("Timeout    : %s"%(Fore.CYAN + str(float(Args.timeout)) + Fore.MAGENTA + " seconds"), FileHandle)
 
-		sm = Desyncr(configfile, host, port, url=server[0], method=method, httpversion=httpversion ,endpoint=endpoint, SSLFlag=SSLFlagval, logh=FileHandle, smargs=Args)
+		sm = Desyncr(configfile, host, port, url=server[0], method=method, httpversion=httpversion ,endpoint=endpoint, SSLFlag=SSLFlagval, logh=FileHandle, jsonh=JsonHandle, smargs=Args)
 		if Args.attack:
 			sm.attack(Args.file)
 		else:
@@ -693,3 +728,6 @@ if __name__ == "__main__":
 
 	if FileHandle is not None:
 		FileHandle.close()
+		
+	if JsonHandle is not None:
+		JsonHandle.close()
